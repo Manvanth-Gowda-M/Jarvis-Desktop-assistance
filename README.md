@@ -1,0 +1,374 @@
+# Jarvis 2.0: Personal AI & Windows Automation Assistant
+
+A fast, capable personal AI and Windows automation assistant built with Python 3.12 for Windows 10/11. Features conversational voice interaction with Windows SAPI text-to-speech, real-time "Hey Jarvis" wake-word detection powered by openWakeWord ONNX neural models, a sleek PySide6 desktop floating orb interface, zero-latency local system commands, safe file management confined to approved directory roots, desktop automation, secure draft-only Gmail and Outlook integration backed by Windows DPAPI encryption, SQLite memory persistence, and multi-step reasoning using OpenRouter's free AI models.
+
+---
+
+## Technology Stack
+
+| Layer | Component / Library | Purpose |
+|---|---|---|
+| **Language & Runtime** | Python 3.12 (64-bit) | Core runtime environment on Windows 10/11 |
+| **User Interface** | PySide6 (Qt 6 for Python) | Frameless, translucent desktop floating orb with state animations (STANDBY, LISTENING, THINKING, SPEAKING) |
+| **Wake-Word Engine** | openWakeWord + ONNX Runtime | On-device, low-latency "Hey Jarvis" neural detection running locally on CPU |
+| **Speech Recognition** | SpeechRecognition + PyAudio | Windows microphone audio capture and Google Speech API speech-to-text |
+| **Text-to-Speech (TTS)** | Windows SAPI (`win32com.client`) | Natural Windows speech synthesis with instant keyboard & voice interruption |
+| **AI & LLM Reasoning** | OpenRouter API (`httpx`) | Dynamic tool-calling agent with strict `:free` model enforcement and synthesis fallback |
+| **Email Integration** | Google OAuth 2.0 + MSAL / Graph API | Secure, draft-only email composition for Gmail and Microsoft Outlook |
+| **Token Security** | Windows DPAPI (`crypt32` / `msal-extensions`) | Hardware-backed local token encryption tied to the Windows user session |
+| **Desktop Automation** | `pywin32` + `pyautogui` + `pillow` | Window management (focus, minimize, maximize), desktop screenshots, and controlled typing |
+| **System Control** | `pycaw` + `screen-brightness-control` + `psutil` | Audio endpoint volume, monitor brightness, battery, power, and session control |
+| **File Safety** | `pathlib` + `send2trash` | Path traversal prevention, approved root boundaries, and safe recycle bin deletions |
+| **Database & Audit** | SQLite3 | Persistent user memory and immutable action audit logging with secret redaction |
+| **Testing** | `pytest` + `pytest-asyncio` + `unittest.mock` | Automated test suite (277 passing tests) |
+
+---
+
+## Key Features
+
+1. **Local "Hey Jarvis" Wake-Word Detection (`assistant/wake_word.py`)**:
+   - Runs locally without cloud dependencies using ONNX neural models (`hey_jarvis_v0.1.onnx`, `melspectrogram.onnx`, `embedding_model.onnx`).
+   - Calibrated multi-frame temporal window validation to prevent false positives and duplicate activations.
+   - Smooth microphone handoff between standby wake-word monitoring and command capture.
+
+2. **Interactive Desktop Orb UI (`assistant/desktop_ui.py`)**:
+   - Sleek, movable, translucent floating orb widget with dynamic glowing animations indicating assistant state.
+   - Fallback manual **Speak** button, **Email** status dialog, and quick diagnostic toggles.
+
+3. **Advanced Windows System Control (`assistant/system_control.py`)**:
+   - Volume control: set percentage (0–100%), relative up/down, mute/unmute, and volume status queries.
+   - Display brightness: adjust monitor brightness up/down or set exact percentage.
+   - Power & session management: lock computer, safe power actions (shutdown, restart, sleep, signout) requiring explicit confirmation (`confirmed=True`).
+   - Hardware metrics: real-time battery status, disk storage usage, memory, and network connectivity.
+
+4. **Desktop Automation & Window Management (`assistant/desktop_control.py`)**:
+   - Window control: list open windows, bring window to front (`focus_window`), minimize, maximize, restore, and safe close (`close_window` with confirmation).
+   - Desktop actions: full screen capture (`take_screenshot` saved to `screenshots/`), typing simulation (`type_text` with 500-char max and command-injection protection), and explorer folder opening (`open_folder`).
+
+5. **Safe File Management (`assistant/file_manager.py`)**:
+   - Operations: search files, list directories, read text files (with truncation safety), create folders, create/overwrite text files, copy, move, rename, find duplicates, and open files with their default application.
+   - Security: strictly constrained to `APPROVED_ROOTS` (Desktop, Documents, Downloads, Pictures, Music, Videos, notes, screenshots, and the Jarvis workspace). Path traversal (`..`) is blocked. Executables (`.exe`, `.bat`, `.ps1`, `.cmd`, `.vbs`, `.js`) are strictly forbidden from execution.
+   - Recoverable Deletion: deletions use `send2trash` to send files to the Windows Recycle Bin (requires `confirmed=True`).
+
+6. **Email Drafting & Provider Integration (`assistant/email_assistant.py`)**:
+   - Safe drafting: compose email drafts with recipient, subject, and body. Always displays a prominent "NOT SENT" preview.
+   - Provider support: supports draft-only mode out of the box, with built-in OAuth support for Gmail and Microsoft Outlook.
+   - Zero-send guarantee: no tool exists in the agent for sending emails. Only drafts are created.
+
+7. **User Approval & Action Audit History (`assistant/approvals.py`)**:
+   - Risk classification: actions are classified as LOW, MEDIUM, HIGH, or CRITICAL.
+   - Audit trail: persists all actions to `database/action_history.db` with timestamps, risk levels, and outcomes. Automatically redacts API keys and sensitive tokens before writing to disk.
+
+8. **Intelligent Multi-Step Reasoning (`assistant/agent.py`)**:
+   - Multi-step tool execution loop with dynamic routing across 40+ registered tools.
+   - Automatic synthesis pass: ensures comprehensive summaries with source URLs even when tool limits are approached.
+   - Strict OpenRouter free model enforcement: exclusively uses `:free` models (default `openrouter/free`).
+
+9. **Voice & Text Experience (`assistant/speech.py` & `assistant/listen.py`)**:
+   - Spoken answers are concise and conversational. Full details, markdown, code, and source links are displayed in the terminal.
+   - Interruptibility: press `Space`, `Esc`, `q`, or `Enter` to instantly stop speech. Voice interrupt listening for stop phrases.
+
+---
+
+## Project Structure
+
+```
+Jarvis/
+├── .env.example             # Clean configuration template with environment variable placeholders
+├── .gitignore               # Excludes secrets, credentials, OAuth tokens, DBs, venvs, caches
+├── requirements.txt         # Project dependencies with pinned versions
+├── config.py                # Centralized settings & free-model validation
+├── main.py                  # Entry point (--desktop, --voice, --text, --diagnostics)
+├── README.md                # Documentation and setup instructions
+├── credentials/             # Directory for local credentials (git-ignored, tracked by .gitkeep)
+├── database/                # SQLite storage (jarvis_memory.db, action_history.db) (.gitkeep)
+├── diagnostics/             # Live microphone and device calibration diagnostics
+│   ├── calibrate_microphones.py
+│   ├── enumerate_devices.py
+│   └── wake_word_live_test.py
+├── models/                  # ONNX wake-word models (~3.5 MB total)
+│   ├── hey_jarvis_v0.1.onnx
+│   ├── melspectrogram.onnx
+│   └── embedding_model.onnx
+├── notes/                   # Persistent Markdown notes directory (.gitkeep)
+├── screenshots/             # Desktop screenshots directory (.gitkeep)
+├── sounds/                  # Audio cues and UI sound effects (.gitkeep)
+├── tests/                   # Pytest automated test suite (277 tests)
+│   ├── test_agent_errors.py
+│   ├── test_approvals.py
+│   ├── test_audio_coordinator.py
+│   ├── test_desktop_control.py
+│   ├── test_email_assistant.py
+│   ├── test_email_integration.py
+│   ├── test_file_manager.py
+│   ├── test_free_models.py
+│   ├── test_memory.py
+│   ├── test_system_control.py
+│   └── test_wake_word.py
+└── assistant/
+    ├── __init__.py          # Unified package exports
+    ├── agent.py             # OpenRouter tool-calling agent with free-model failover
+    ├── approvals.py         # Risk classification and SQLite action audit history
+    ├── audio_coordinator.py # Thread-safe microphone ownership and state coordinator
+    ├── brain.py             # Brain compatibility interface
+    ├── commands.py          # Fast local zero-latency command handlers
+    ├── desktop_control.py   # Windows desktop and window management
+    ├── desktop_ui.py        # PySide6 animated floating orb and control panel
+    ├── diagnostics.py       # Hardware, service, and environment diagnostics
+    ├── email_assistant.py   # Safe email drafting and OAuth provider integration
+    ├── file_manager.py      # Safe file manager constrained to approved roots
+    ├── jarvis.py            # Main application coordinator
+    ├── listen.py            # Speech recognition audio loop
+    ├── memory.py            # SQLite memory storage and keyword retrieval
+    ├── notes.py             # Markdown notes management with traversal safety
+    ├── router.py            # Intent dispatcher (fast commands -> AI agent)
+    ├── speech.py            # Windows SAPI TTS with voice & keyboard interruption
+    ├── system_control.py    # Windows volume, brightness, battery, power control
+    ├── tools.py             # Registered tool implementations and schemas
+    └── wake_word.py         # openWakeWord ONNX engine and stream listener
+```
+
+---
+
+## Setup & Installation
+
+### 1. Prerequisites
+- **Operating System**: Windows 10 or Windows 11 (64-bit)
+- **Python**: Python 3.12 (recommended) or 3.11+
+- **Hardware**: Working microphone and speakers / headphones
+
+### 2. Virtual Environment Setup
+Open PowerShell or Command Prompt:
+
+```powershell
+# Clone the repository
+git clone https://github.com/your-username/jarvis.git
+cd jarvis
+
+# Create a clean virtual environment
+python -m venv .venv
+
+# Activate the virtual environment
+# In PowerShell:
+.\.venv\Scripts\Activate.ps1
+# In Command Prompt (cmd):
+# .\.venv\Scripts\activate.bat
+
+# Upgrade pip
+python -m pip install --upgrade pip
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 3. Environment Configuration
+Copy the template configuration file to `.env`:
+
+```powershell
+cp .env.example .env
+```
+
+Open `.env` in your text editor and add your OpenRouter API key:
+```env
+OPENROUTER_API_KEY=sk-or-v1-your-actual-api-key-here
+OPENROUTER_MODEL=openrouter/free
+JARVIS_NAME=Jarvis
+```
+*(Get a free API key at [openrouter.ai](https://openrouter.ai). Jarvis uses only `:free` models by design.)*
+
+### 4. Wake-Word ONNX Models
+The required ONNX models are included in `models/` (~3.5 MB total):
+- `models/hey_jarvis_v0.1.onnx`
+- `models/melspectrogram.onnx`
+- `models/embedding_model.onnx`
+
+If you ever need to re-download the official openWakeWord models, run:
+```powershell
+python -m assistant.wake_word --download
+```
+
+---
+
+## How to Run Jarvis
+
+### 1. Desktop Mode with Floating Animated Orb (Recommended)
+Launches the full interactive experience with the animated floating orb, local wake-word listener, and quick-action bar:
+```powershell
+python main.py --desktop
+```
+- Say **"Hey Jarvis"** hands-free to activate listening.
+- Click the **Speak** button as a manual fallback.
+- Click the **✉ Email** button to inspect or connect email accounts.
+
+### 2. Console Voice Mode
+Runs Jarvis directly in your terminal with voice interaction:
+```powershell
+python main.py
+```
+*(Speak your command; press `Space`, `Esc`, or `q` anytime while Jarvis is speaking to interrupt.)*
+
+### 3. Text Mode
+Runs Jarvis in interactive text-prompt mode (ideal for quiet environments or testing):
+```powershell
+python main.py --text
+```
+
+### 4. Diagnostics & Calibration
+Check all connected hardware, audio input devices, and system dependencies:
+```powershell
+# Full system diagnostics
+python main.py --diagnostics
+
+# Calibrate microphone and test wake-word detection in real time
+python diagnostics/wake_word_live_test.py
+```
+
+### 5. Run Automated Unit Tests
+Verify the entire test suite across all modules:
+```powershell
+python -m pytest -q
+```
+*(All 277 unit and integration tests should pass.)*
+
+---
+
+## Email Provider OAuth Setup & Security (Gmail + Outlook)
+
+Jarvis features a strict **Draft-Only** email integration that connects securely to both **Gmail** and **Microsoft Outlook**.
+
+### Safety Contract
+- **Strict Draft-Only**: Jarvis only creates drafts in your Gmail or Outlook Drafts folder.
+- **Zero Send Tools**: No `send_email` or `send_draft` tool is registered or exposed to the AI agent. Sending is disabled.
+- **Scope Transparency**:
+  - Gmail uses `https://www.googleapis.com/auth/gmail.compose`. Restricted strictly to `users.drafts.create`.
+  - Outlook uses Microsoft Graph delegated `Mail.ReadWrite`. Jarvis never requests or uses `Mail.Send`.
+- **Token Security**:
+  - OAuth tokens and credentials are kept strictly outside the Git repository in `%LOCALAPPDATA%\Jarvis\oauth`.
+  - Stored tokens are encrypted using **Windows DPAPI** (`CryptProtectData`), tying decryption exclusively to the active Windows user account.
+  - No plaintext credentials, access tokens, refresh tokens, or passwords are ever logged or saved.
+
+---
+
+### A. Gmail OAuth 2.0 Setup Guide
+1. Open the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a project named **Jarvis Desktop Assistant** (or select an existing one).
+3. Navigate to **APIs & Services > Library**, search for **Gmail API**, and click **Enable**.
+4. Navigate to **APIs & Services > OAuth consent screen**:
+   - User Type: **External** (for personal Gmail accounts).
+   - App Name: `Jarvis Desktop Assistant`.
+   - User support and Developer contact email: your personal Gmail.
+   - Scopes: Add `https://www.googleapis.com/auth/gmail.compose`.
+   - Test Users: Add your personal Gmail address.
+   - Click **Save and Continue**.
+5. Navigate to **APIs & Services > Credentials**:
+   - Click **Create Credentials > OAuth client ID**.
+   - Application Type: **Desktop app**.
+   - Name: `Jarvis Desktop`.
+   - Download the client configuration JSON file.
+6. Save the downloaded JSON file to:
+   ```
+   %LOCALAPPDATA%\Jarvis\oauth\google_credentials.json
+   ```
+   *(e.g. `C:\Users\<Username>\AppData\Local\Jarvis\oauth\google_credentials.json`)*
+7. In the Jarvis desktop interface (`python main.py --desktop`), click the **✉ Email** button and click **Connect** next to Gmail. Your default browser will open for Google authentication. Once approved, your encrypted token is securely stored in `%LOCALAPPDATA%\Jarvis\oauth\gmail_token.dpapi`.
+
+---
+
+### B. Microsoft Outlook / Microsoft Graph Setup Guide
+1. Open the [Microsoft Azure Portal - App Registrations](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade).
+2. Click **New registration**:
+   - Name: `Jarvis Desktop Assistant`.
+   - Supported account types: **Accounts in any organizational directory and personal Microsoft accounts (e.g. Skype, Xbox, Outlook.com)**.
+   - Redirect URI: Select platform **Public client/native** and enter `http://localhost`.
+   - Click **Register**.
+3. Copy the **Application (client) ID** (a GUID format string) from the Overview page.
+4. Navigate to **API Permissions > Add a permission**:
+   - Select **Microsoft Graph > Delegated permissions**.
+   - Search for and check `Mail.ReadWrite`. *(Do NOT add `Mail.Send`)*.
+   - Click **Add permissions**.
+5. Add your client ID to `.env` in the Jarvis project directory:
+   ```env
+   JARVIS_OUTLOOK_CLIENT_ID=your-azure-application-client-id-guid
+   JARVIS_OUTLOOK_AUTHORITY=https://login.microsoftonline.com/common
+   ```
+6. In the Jarvis desktop interface, click **✉ Email** and click **Connect** next to Outlook. Your browser will open for Microsoft account sign-in. Cached tokens are DPAPI-encrypted via `msal-extensions` at `%LOCALAPPDATA%\Jarvis\oauth\outlook_token_cache.bin`.
+
+---
+
+## Security Warnings & Limitations
+
+1. **Never Commit Secrets**:
+   - Your `.env` file containing API keys and credentials in `credentials/` are git-ignored. Never remove these entries from `.gitignore` or force-push them to public repositories.
+2. **Local Token Security**:
+   - OAuth tokens are DPAPI-encrypted and saved in `%LOCALAPPDATA%\Jarvis\oauth`. This means tokens cannot be transferred or decrypted by other users or machines.
+3. **Drafts Only**:
+   - Jarvis is intentionally architected without automated email sending. You retain complete human-in-the-loop oversight to review, edit, and send any email draft directly from your email client.
+4. **Filesystem Boundaries**:
+   - The file manager strictly validates real paths against `FILE_APPROVED_ROOTS`. Symlink and path traversal attacks are rejected. Any deletion is non-destructive (routed to Windows Recycle Bin via `send2trash`) and requires confirmation.
+5. **System Power Actions**:
+   - Critical power actions (shutdown, restart, signout) require double-confirmation to prevent accidental invocation.
+6. **Free-Model Constraints**:
+   - Jarvis enforces free AI models (`:free`). Rate limits or temporary provider downtime on OpenRouter may require a brief cooldown before re-submitting queries.
+
+---
+
+## Voice Demo Script
+
+Try speaking these natural phrases to Jarvis in voice or desktop mode:
+
+1. **Wake-Word & Conversational**:
+   - *"Hey Jarvis"* -> Activates the orb and starts listening.
+   - *"What can you do?"*
+   - *"What time is it?"*
+
+2. **System Control**:
+   - *"Jarvis, set the volume to 40 percent."*
+   - *"Turn the volume down a bit."*
+   - *"Set brightness to 80 percent."*
+   - *"What is my battery level and disk space?"*
+   - *"Open Windows display settings."*
+   - *"Lock my computer."*
+
+3. **Desktop Automation**:
+   - *"What windows do I have open right now?"*
+   - *"Switch focus to Google Chrome."*
+   - *"Minimize Notepad."*
+   - *"Take a screenshot."*
+
+4. **Safe File Management**:
+   - *"List the files in my Documents folder."*
+   - *"Search for Python files in my project."*
+   - *"Create a folder called InterviewPrep in my Documents."*
+   - *"Write a note in notes/plan.md with today's objectives."*
+
+5. **Web Research & Notes**:
+   - *"Research the difference between async and multithreading in Python and summarize it."*
+   - *"Save that summary into my research notes."*
+   - *"Read back my latest research note."*
+
+6. **Email Drafting**:
+   - *"Draft an email to professor@university.edu requesting an appointment."*
+   - *"Write a professional internship follow-up email to recruiter@company.com."*
+   - *"Use Outlook for this draft."*
+   - *"Save this draft in Gmail."*
+   - *"Read my email draft."*
+
+---
+
+## Supported Fast Commands
+
+| Command | Action |
+|---|---|
+| `what time is it` / `time` | Returns local time instantly |
+| `what is today's date` / `date` | Returns today's date |
+| `system status` / `cpu` / `battery` | Checks CPU, RAM, and Battery percentages |
+| `open chrome` / `launch chrome` | Opens Google Chrome |
+| `open notepad` / `open calculator` | Opens Notepad or Calculator |
+| `open vscode` / `launch vscode` | Opens Visual Studio Code |
+| `google <query>` / `search for <query>` | Opens Google search in your browser |
+| `youtube <query>` | Searches YouTube in your browser |
+| `remember <fact>` | Saves fact to SQLite long-term memory |
+| `what do you remember [about <topic>]` | Recalls saved facts matching topic |
+| `list notes` | Lists saved Markdown research notes |
+| `text mode` / `voice mode` | Switches interaction mode dynamically |
+| `exit` / `quit` / `goodbye` | Closes Jarvis |

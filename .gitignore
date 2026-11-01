@@ -1,0 +1,92 @@
+# ============================================================
+#  Jarvis Assistant — Git Ignore Configuration
+# ============================================================
+
+# --- Environment & Secret Configuration ---
+.env
+.env.*
+*.env
+!.env.example
+
+# --- OAuth Credentials, Client Secrets & Tokens ---
+# Real credentials and tokens must NEVER be committed to version control.
+credentials/*
+!credentials/.gitkeep
+oauth/
+.oauth/
+*credentials*.json
+client_secret*.json
+google_credentials*.json
+*token*.json
+*token*.bin
+*token*.dpapi
+*.dpapi
+*.bin
+*.key
+*.pem
+*.pfx
+*.p12
+
+# --- Local Databases (Contains Personal User Data & History) ---
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+*.db
+*.sqlite
+*.sqlite3
+!database/.gitkeep
+
+# --- Python Virtual Environments ---
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# --- Python Bytecode & Runtime Caches ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# --- Testing & Code Coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+
+# --- Logs, Diagnostics & Temp Files ---
+*.log
+action_history.log
+scratch/
+notes/*.tmp
+*.tmp
+*.bak
+*.swp
+
+# --- User Screenshots & Captured Media ---
+screenshots/*
+!screenshots/.gitkeep
+
+# --- IDE, Editor & OS Metadata ---
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# --- Packaging & Distribution ---
+build/
+dist/
+*.egg-info/
+eggs/
+.eggs/

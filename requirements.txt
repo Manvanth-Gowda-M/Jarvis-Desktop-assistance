@@ -1,0 +1,45 @@
+# Jarvis 2.0 — Personal AI Assistant Dependencies
+# Install with: pip install -r requirements.txt
+
+# --- Core AI & API ---
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# --- Speech & Voice ---
+SpeechRecognition>=3.10.0
+PyAudio>=0.2.14
+pywin32>=306
+
+# --- System & Hardware ---
+psutil>=5.9.0
+Pillow>=10.0.0
+
+# --- Web Research ---
+duckduckgo-search>=6.0.0
+
+# --- File Management ---
+Send2Trash>=1.8.3
+
+# --- Desktop GUI & Wake-Word ---
+PySide6>=6.6.0
+openwakeword>=0.6.0
+onnxruntime>=1.16.0
+
+# --- Testing ---
+pytest>=8.0.0
+
+# --- Optional: Desktop Automation (install separately if needed) ---
+# pywinauto>=0.6.8
+
+# --- Optional: Volume Control via Core Audio ---
+# pycaw>=20181226
+
+# --- Screen Brightness ---
+screen-brightness-control>=0.16.0
+
+# --- Email Integration (Gmail + Outlook Graph) ---
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.1.1
+google-auth-oauthlib>=1.1.0
+msal>=1.24.0
+msal-extensions>=1.1.0
