@@ -13,9 +13,21 @@ import time
 from typing import Callable, Optional
 
 from assistant.listen import Listener
-from assistant.speech import Speaker, prepare_spoken_answer
+from assistant.speech import Speaker, prepare_spoken_answer, normalize_phrase
 from assistant.router import route_request
 from assistant.wake_word import WakeWordDetector
+from config import FOLLOW_UP_ENABLED, FOLLOW_UP_TIMEOUT, FOLLOW_UP_MAX_TURNS, WAKE_CHIME
+
+_DISMISSALS = {
+    "no", "nope", "no thanks", "no thank you", "that s all", "thats all", "that is all", "nothing",
+    "never mind", "nevermind", "i m good", "im good", "all good", "thanks", "thank you", "thanks jarvis",
+    "thank you jarvis", "cancel", "stop", "goodbye", "bye",
+}
+
+
+def _normalize_dismissal(text: str) -> bool:
+    """True when a follow-up utterance just ends the conversation."""
+    return normalize_phrase(text) in _DISMISSALS
 
 
 class AssistantState(enum.Enum):
@@ -38,9 +50,11 @@ class AudioCoordinator:
         on_result: Optional[Callable[[str, str], None]] = None,
         microphone_device_index: Optional[int] = None,
         wake_word_device_index: Optional[int] = None,
+        on_heard: Optional[Callable[[str], None]] = None,
     ):
         self.on_state_change = on_state_change
         self.on_result = on_result
+        self.on_heard = on_heard
 
         self._state = AssistantState.STANDBY
         self._state_lock = threading.Lock()
@@ -58,6 +72,9 @@ class AudioCoordinator:
 
         self._worker_thread: Optional[threading.Thread] = None
         self._speech_interrupted = False
+        self._last_should_exit = False
+        self.follow_up_enabled = FOLLOW_UP_ENABLED
+        self.wake_chime = WAKE_CHIME
 
     @property
     def state(self) -> AssistantState:
@@ -175,45 +192,85 @@ class AudioCoordinator:
         self.trigger_listening()
 
     def _capture_and_process_task(self, prompt_text: str = ""):
-        """Background worker: captures speech utterance then executes."""
+        """Background worker: captures speech, executes it, then listens for follow-ups.
+
+        After Jarvis answers a voice command it keeps the microphone open for a few
+        seconds so you can continue the conversation without repeating "Hey Jarvis".
+        """
         cur = threading.current_thread()
         print(f"[Coordinator] AudioCaptureWorker started [Thread: {cur.name}({cur.ident})]")
         try:
             command = prompt_text
             if not command:
-                with self._audio_lock:
-                    self._audio_owner = "active_listener"
-                print(f"[Coordinator] Microphone ownership acquired: active_listener [Thread: {cur.name}({cur.ident})]")
-                try:
-                    command = self.listener.listen()
-                finally:
-                    with self._audio_lock:
-                        self._audio_owner = None
-                    print(f"[Coordinator] Microphone ownership released: active_listener [Thread: {cur.name}({cur.ident})]")
+                if self.wake_chime:
+                    try:
+                        from assistant import sounds
+                        sounds.play("wake")
+                        time.sleep(0.32)  # let the chime finish before the mic opens
+                    except Exception:
+                        pass
+                command = self._listen_once()
 
             if not command:
-                # No speech detected or timeout
                 self.set_state(AssistantState.STANDBY, "No speech detected.")
                 self._resume_wake_detector_if_ready()
                 return
 
-            print(f"[Coordinator] Heard command: '{command}'")
-            self._execute_command(command)
+            turns = 0
+            while command and not self._is_paused and self._is_running:
+                print(f"[Coordinator] Heard command: '{command}'")
+                if self.on_heard:
+                    try:
+                        self.on_heard(command)
+                    except Exception as e:
+                        print(f"[Coordinator] Heard callback error: {e}")
+                completed = self._execute_command(command, resume_after=False)
+                turns += 1
+                if not (self.follow_up_enabled and completed and turns < FOLLOW_UP_MAX_TURNS):
+                    break
+                if self._is_paused or not self._is_running or self._last_should_exit:
+                    break
+                self.set_state(AssistantState.LISTENING, "Listening for a follow-up...")
+                command = self._listen_once(timeout=FOLLOW_UP_TIMEOUT)
+                if command and _normalize_dismissal(command):
+                    command = ""
 
         except Exception as exc:
             print(f"[Coordinator] Error during speech capture: {exc}")
             self.set_state(AssistantState.ERROR, f"Capture error: {exc}")
             time.sleep(1.5)
-            self.set_state(AssistantState.STANDBY, "Ready.")
-            self._resume_wake_detector_if_ready()
+        finally:
+            if not self._is_paused:
+                self.set_state(AssistantState.STANDBY, "Ready.")
+                self._resume_wake_detector_if_ready()
 
-    def _execute_command(self, command: str):
-        """Execute command through Jarvis router (local fast path or AI agent)."""
+    def _listen_once(self, timeout: float | None = None) -> str:
+        cur = threading.current_thread()
+        with self._audio_lock:
+            self._audio_owner = "active_listener"
+        print(f"[Coordinator] Microphone ownership acquired: active_listener [Thread: {cur.name}({cur.ident})]")
+        try:
+            if timeout is None:
+                return self.listener.listen()
+            return self.listener.listen(timeout=timeout)
+        finally:
+            with self._audio_lock:
+                self._audio_owner = None
+            print(f"[Coordinator] Microphone ownership released: active_listener [Thread: {cur.name}({cur.ident})]")
+
+    def _execute_command(self, command: str, resume_after: bool = True) -> bool:
+        """Execute command through Jarvis router (local fast path or AI agent).
+
+        Returns True when the spoken answer finished without interruption.
+        """
+        completed = False
+        self._last_should_exit = False
         try:
             self.set_state(AssistantState.THINKING, "Thinking...")
 
             # Run through existing router
             result = route_request(command)
+            self._last_should_exit = bool(getattr(result, "should_exit", False))
 
             detailed = result.detailed_text or "Task complete."
             spoken = result.spoken_text or detailed
@@ -231,11 +288,11 @@ class AudioCoordinator:
             self.set_state(AssistantState.SPEAKING, spoken)
 
             # Speak concise response
-            completed = self.speaker.speak(spoken)
+            completed = bool(self.speaker.speak(spoken))
 
             if completed:
                 self.set_state(AssistantState.SUCCESS, "Done.")
-                time.sleep(0.4)
+                time.sleep(0.2)
             else:
                 self.set_state(AssistantState.STANDBY, "Speech interrupted.")
 
@@ -243,11 +300,47 @@ class AudioCoordinator:
             print(f"[Coordinator] Execution error: {exc}")
             self.set_state(AssistantState.ERROR, f"Error: {exc}")
             time.sleep(2.0)
+            completed = False
 
         finally:
-            if not self._is_paused:
+            if resume_after and not self._is_paused:
                 self.set_state(AssistantState.STANDBY, "Ready.")
                 self._resume_wake_detector_if_ready()
+        return completed
+
+    def announce(self, text: str, speak: bool = True):
+        """Proactively tell the user something (reminders, greetings) without a command."""
+        text = str(text or "").strip()
+        if not text:
+            return
+        if self.on_result:
+            try:
+                self.on_result(text, text)
+            except Exception as e:
+                print(f"[Coordinator] Result callback error: {e}")
+        if not speak or self._is_paused:
+            return
+
+        def _run():
+            # Wait (briefly) for any in-flight interaction to finish.
+            deadline = time.time() + 30
+            while time.time() < deadline and self._state not in (AssistantState.STANDBY, AssistantState.SUCCESS):
+                time.sleep(0.2)
+            if self._is_paused or not self._is_running:
+                return
+            self.wake_detector.stop_listening()
+            with self._audio_lock:
+                if self._audio_owner == "wake_word":
+                    self._audio_owner = None
+            try:
+                self.set_state(AssistantState.SPEAKING, text)
+                self.speaker.speak(prepare_spoken_answer(text), enable_voice_interrupt=False)
+            finally:
+                if not self._is_paused:
+                    self.set_state(AssistantState.STANDBY, "Ready.")
+                    self._resume_wake_detector_if_ready()
+
+        threading.Thread(target=_run, name="AnnounceWorker", daemon=True).start()
 
     def _resume_wake_detector_if_ready(self):
         """Restart wake-word detector when returning to standby."""

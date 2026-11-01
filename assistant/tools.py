@@ -10,9 +10,12 @@ import psutil
 import requests
 
 try:
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS
 except ImportError:
-    DDGS = None
+    try:
+        from duckduckgo_search import DDGS
+    except ImportError:
+        DDGS = None
 
 from assistant.memory import (
     remember_fact,
@@ -40,6 +43,10 @@ from assistant.desktop_control import (
     DESKTOP_TOOLS_SCHEMA,
     DESKTOP_AVAILABLE_TOOLS,
 )
+from assistant.skills import SKILLS_TOOLS_SCHEMA, SKILLS_AVAILABLE_TOOLS
+from assistant.reminders import REMINDER_TOOLS_SCHEMA, REMINDER_AVAILABLE_TOOLS
+from assistant.vision import VISION_TOOLS_SCHEMA, VISION_AVAILABLE_TOOLS
+from assistant.media import MEDIA_TOOLS_SCHEMA, MEDIA_AVAILABLE_TOOLS
 
 
 def get_current_time() -> str:
@@ -120,7 +127,98 @@ def open_application(application: str) -> str:
         else:
             return "Visual Studio Code was not found on this system."
 
-    return f"I don't know how to open '{application}' yet. Supported: Chrome, Notepad, Calculator, VS Code."
+    return _open_via_start_menu(application)
+
+
+# Built-in Windows tools that are safe to launch by name.
+_BUILTIN_APPS = {
+    "file explorer": "explorer.exe", "explorer": "explorer.exe", "files": "explorer.exe",
+    "task manager": "taskmgr.exe", "paint": "mspaint.exe", "wordpad": "write.exe",
+    "command prompt": "cmd.exe", "cmd": "cmd.exe", "powershell": "powershell.exe",
+    "terminal": "wt.exe", "windows terminal": "wt.exe", "snipping tool": "SnippingTool.exe",
+    "control panel": "control.exe", "registry editor": None,  # deliberately not launchable
+    "settings": "ms-settings:", "camera": "microsoft.windows.camera:", "store": "ms-windows-store:",
+    "microsoft store": "ms-windows-store:", "clock": "ms-clock:", "alarms": "ms-clock:",
+    "photos": "ms-photos:", "mail": "outlookmail:", "calendar": "outlookcal:",
+}
+
+
+def _start_menu_shortcuts() -> list:
+    from pathlib import Path
+
+    roots = [
+        Path(os.path.expandvars(r"%ProgramData%\Microsoft\Windows\Start Menu\Programs")),
+        Path(os.path.expandvars(r"%AppData%\Microsoft\Windows\Start Menu\Programs")),
+        Path.home() / "Desktop",
+        Path(os.path.expandvars(r"%Public%\Desktop")),
+    ]
+    found = []
+    for root in roots:
+        if not root.exists():
+            continue
+        try:
+            for p in root.rglob("*"):
+                if p.suffix.lower() in {".lnk", ".url", ".appref-ms"}:
+                    found.append(p)
+        except OSError:
+            continue
+    return found
+
+
+def _open_via_start_menu(application: str) -> str:
+    """Launch any installed app by matching Start Menu / Desktop shortcuts."""
+    import difflib
+
+    name = re.sub(r"\b(app|application|program|the|please)\b", " ", str(application).lower())
+    name = re.sub(r"\s+", " ", name).strip()
+    if not name:
+        return f"I don't know how to open '{application}' yet."
+
+    if name in _BUILTIN_APPS:
+        target = _BUILTIN_APPS[name]
+        if not target:
+            return f"For safety I won't open '{application}' automatically."
+        try:
+            os.startfile(target)
+            return f"{application.strip().title()} is now open."
+        except Exception as e:
+            return f"Failed to open {application}: {e}"
+
+    shortcuts = _start_menu_shortcuts()
+    skip_words = ("uninstall", "readme", "help", "documentation", "website", "release notes")
+    best, best_score = None, 0.0
+    for sc in shortcuts:
+        stem = sc.stem.lower()
+        if any(w in stem for w in skip_words):
+            continue
+        if stem == name:
+            score = 1.0
+        elif stem.startswith(name) or f" {name}" in f" {stem}":
+            score = 0.9 - min(len(stem) - len(name), 40) / 200
+        else:
+            score = difflib.SequenceMatcher(None, name, stem).ratio()
+        if score > best_score:
+            best, best_score = sc, score
+
+    if best is not None and best_score >= 0.72:
+        try:
+            os.startfile(str(best))
+            return f"{best.stem} is now open."
+        except Exception as e:
+            return f"Found {best.stem} but couldn't start it: {e}"
+
+    exe = shutil.which(name.replace(" ", "")) if len(name) <= 40 else None
+    if exe and not exe.lower().endswith((".bat", ".cmd", ".ps1", ".vbs")):
+        try:
+            subprocess.Popen([exe])
+            return f"{application.strip()} is now open."
+        except Exception as e:
+            return f"Failed to start {application}: {e}"
+
+    return (
+        f"I don't know how to open '{application}' yet. I couldn't find it in the Start Menu. "
+        "Try the exact app name as it appears in Start."
+    )
 
 
 def search_web(query: str) -> str:
@@ -254,13 +352,13 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "open_application",
-            "description": "Open a supported Windows application (Chrome, Notepad, Calculator, VS Code).",
+            "description": "Open any installed Windows application by name (Chrome, Spotify, Word, Discord, File Explorer, Task Manager, Settings...). Searches the Start Menu.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "application": {
                         "type": "string",
-                        "description": "Application name, e.g. 'chrome', 'notepad', 'calc', 'vscode'.",
+                        "description": "Application name as it appears in the Start Menu, e.g. 'chrome', 'spotify', 'word'.",
                     }
                 },
                 "required": ["application"],
@@ -408,8 +506,90 @@ TOOLS_SCHEMA.extend(SYSTEM_CONTROL_TOOLS_SCHEMA)
 TOOLS_SCHEMA.extend(FILE_MANAGER_TOOLS_SCHEMA)
 TOOLS_SCHEMA.extend(EMAIL_TOOLS_SCHEMA)
 TOOLS_SCHEMA.extend(DESKTOP_TOOLS_SCHEMA)
+TOOLS_SCHEMA.extend(SKILLS_TOOLS_SCHEMA)
+TOOLS_SCHEMA.extend(REMINDER_TOOLS_SCHEMA)
+TOOLS_SCHEMA.extend(VISION_TOOLS_SCHEMA)
+TOOLS_SCHEMA.extend(MEDIA_TOOLS_SCHEMA)
 
 AVAILABLE_TOOLS.update(SYSTEM_CONTROL_AVAILABLE_TOOLS)
 AVAILABLE_TOOLS.update(FILE_MANAGER_AVAILABLE_TOOLS)
 AVAILABLE_TOOLS.update(EMAIL_AVAILABLE_TOOLS)
 AVAILABLE_TOOLS.update(DESKTOP_AVAILABLE_TOOLS)
+AVAILABLE_TOOLS.update(SKILLS_AVAILABLE_TOOLS)
+AVAILABLE_TOOLS.update(REMINDER_AVAILABLE_TOOLS)
+AVAILABLE_TOOLS.update(VISION_AVAILABLE_TOOLS)
+AVAILABLE_TOOLS.update(MEDIA_AVAILABLE_TOOLS)
+
+
+# ---------------------------------------------------------------------------
+# Smart tool selection
+# ---------------------------------------------------------------------------
+# Free tiers have tight tokens-per-minute limits (Groq: ~8K TPM on some models).
+# Sending all ~65 tool schemas costs ~6K tokens per request, so we only send the
+# groups that are relevant to the current request. Any registered tool can still
+# be executed if the model calls it.
+
+TOOL_GROUPS: dict[str, list[str]] = {
+    "core": [
+        "get_current_time", "get_current_date", "research_web", "remember_fact", "recall_facts",
+        "open_application", "open_website", "calculate", "get_weather", "set_reminder", "play_media",
+    ],
+    "info": ["get_news", "wikipedia_summary", "search_web", "list_memories", "get_system_status"],
+    "reminders": ["set_timer", "list_reminders", "cancel_reminder"],
+    "notes": ["save_research_note", "read_research_note", "list_research_notes"],
+    "media": ["media_control", "play_media", "play_next_result", "set_volume", "adjust_volume", "mute_volume", "get_volume"],
+    "clipboard": ["get_clipboard", "set_clipboard", "type_text"],
+    "vision": ["analyze_screen", "analyze_image", "take_screenshot"],
+}
+
+_GROUP_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "info": ("news", "headline", "wiki", "who is", "who was", "what is", "tell me about", "history",
+             "search", "google", "memor", "status", "cpu", "ram"),
+    "reminders": ("timer", "remind", "alarm", "countdown", "schedule", "reminders"),
+    "notes": ("note", "notes", "save that", "write down", "summary", "summar", "research"),
+    "media": ("music", "song", "track", "play", "pause", "resume", "spotify", "volume", "mute",
+              "louder", "quieter", "sound", "audio", "video", "watch", "listen", "youtube", "playlist",
+              "another one", "different one", "first one", "first video"),
+    "clipboard": ("clipboard", "copied", "copy", "paste", "type ", "typing"),
+    "vision": ("screen", "see", "look", "screenshot", "image", "picture", "photo", "visible", "error on",
+               "what's on", "read this", "this page", "this window"),
+    "system": ("volume", "brightness", "battery", "disk", "storage", "network", "wifi", "internet",
+               "settings", "lock", "shutdown", "shut down", "restart", "reboot", "sleep", "sign out",
+               "signout", "log off", "power", "dim", "bright"),
+    "desktop": ("window", "minimize", "maximise", "maximize", "focus", "switch to", "close", "screenshot",
+                "type ", "folder", "explorer", "active app", "open windows"),
+    "files": ("file", "folder", "directory", "document", "documents", "downloads", "desktop", "pictures",
+              "copy", "move", "rename", "delete", "duplicate", "search for", "find", ".txt", ".md", ".py",
+              ".pdf", "create", "read"),
+    "email": ("email", "e-mail", "mail", "draft", "gmail", "outlook", "inbox", "recipient"),
+}
+
+# Module-sourced groups are filled from the per-module schemas so new tools are picked up automatically.
+TOOL_GROUPS["system"] = [t["function"]["name"] for t in SYSTEM_CONTROL_TOOLS_SCHEMA]
+TOOL_GROUPS["desktop"] = [t["function"]["name"] for t in DESKTOP_TOOLS_SCHEMA]
+TOOL_GROUPS["files"] = [t["function"]["name"] for t in FILE_MANAGER_TOOLS_SCHEMA]
+TOOL_GROUPS["email"] = [t["function"]["name"] for t in EMAIL_TOOLS_SCHEMA]
+
+_SCHEMA_BY_NAME = {t["function"]["name"]: t for t in TOOLS_SCHEMA}
+
+
+def select_tool_groups(text: str) -> set[str]:
+    low = f" {str(text or '').lower()} "
+    groups = {"core"}
+    for group, words in _GROUP_KEYWORDS.items():
+        if any(w in low for w in words):
+            groups.add(group)
+    return groups
+
+
+def select_tools(text: str, extra_groups: set[str] | None = None, mode: str = "smart") -> list[dict]:
+    """Return the tool schemas relevant to *text* (all tools when mode == 'all')."""
+    if mode == "all":
+        return list(TOOLS_SCHEMA)
+    groups = select_tool_groups(text) | set(extra_groups or ())
+    names: list[str] = []
+    for group in groups:
+        for name in TOOL_GROUPS.get(group, []):
+            if name in _SCHEMA_BY_NAME and name not in names:
+                names.append(name)
+    return [_SCHEMA_BY_NAME[n] for n in names]

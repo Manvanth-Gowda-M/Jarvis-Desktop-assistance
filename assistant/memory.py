@@ -144,6 +144,24 @@ def recall_facts(query: str) -> str:
     )
 
 
+def get_memories(limit: int = 200) -> list[tuple[int, str, str]]:
+    """Structured list of (id, content, created_at), newest first (used by the dashboard)."""
+    initialize_database()
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        return conn.execute(
+            "SELECT id, content, created_at FROM memories ORDER BY id DESC LIMIT ?", (int(limit),)
+        ).fetchall()
+
+
+def delete_memory(memory_id: int) -> bool:
+    """Delete one memory by id. Returns True if a row was removed."""
+    initialize_database()
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        cur = conn.execute("DELETE FROM memories WHERE id = ?", (int(memory_id),))
+        conn.commit()
+        return cur.rowcount > 0
+
+
 class Memory:
     """Object-oriented wrapper providing backward compatibility for class-based imports."""
 

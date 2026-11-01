@@ -202,6 +202,131 @@ class ActionResult:
     mode_change: str | None = None  # "text" or "voice"
 
 
+_UNIT_SECONDS = {"s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1,
+                 "m": 60, "min": 60, "mins": 60, "minute": 60, "minutes": 60,
+                 "h": 3600, "hr": 3600, "hrs": 3600, "hour": 3600, "hours": 3600}
+
+_HELP_TEXT = (
+    "Here is what I can do:\n"
+    "- Conversation & research: ask anything; I search the web, Wikipedia and news, and cite sources.\n"
+    "- PC control: open any app or website, volume, brightness, media keys, windows, screenshots, lock, power.\n"
+    "- Screen vision: 'what's on my screen', 'explain this error on screen'.\n"
+    "- Files & notes: search, read, create, copy, move, recycle files; save research notes.\n"
+    "- Productivity: weather, timers, reminders, calculator, clipboard, email drafts (Gmail/Outlook).\n"
+    "- Memory: 'remember that my birthday is in May' and I'll recall it later.\n"
+    "Say 'new conversation' to clear context, or 'exit' to quit."
+)
+
+
+def _try_skill_fast_path(clean: str, original: str) -> ActionResult | None:
+    """Handle common skill phrases locally; returns None when the phrase isn't recognised."""
+    from assistant import skills, reminders
+
+    phrase = clean.rstrip(".?! ")
+
+    # Help
+    if phrase in {"help", "what can you do", "what are your capabilities", "what all can you do",
+                  "what can you do for me", "show commands", "list commands"}:
+        return ActionResult(
+            handled=True,
+            detailed_text=_HELP_TEXT,
+            spoken_text="I can control your PC, see your screen, research anything, manage files, "
+                        "set reminders, and much more. The full list is on screen.",
+        )
+
+    # Conversation reset
+    if phrase in {"new conversation", "reset conversation", "clear conversation", "start over",
+                  "forget this conversation", "new chat", "clear context"}:
+        try:
+            from assistant.agent import reset_conversation
+            reset_conversation()
+        except Exception:
+            pass
+        msg = "Context cleared. Fresh start."
+        return ActionResult(handled=True, detailed_text=msg, spoken_text=msg)
+
+    # Timers: "set a timer for 5 minutes", "timer 30 seconds", "start a 10 minute timer"
+    m = (
+        re.match(r"^(?:set|start)?\s*(?:a\s+)?timer\s+(?:for\s+)?(\d+(?:\.\d+)?)\s*([a-z]+)$", phrase)
+        or re.match(r"^(?:set|start)\s+(?:a\s+)?(\d+(?:\.\d+)?)\s*[- ]?([a-z]+)\s+timer$", phrase)
+    )
+    if m and m.group(2) in _UNIT_SECONDS:
+        seconds = float(m.group(1)) * _UNIT_SECONDS[m.group(2)]
+        res = reminders.set_timer(seconds=seconds)
+        spoken = res
+        if res.startswith("Timer"):
+            spoken = f"Timer set for {reminders._humanize(dt.timedelta(seconds=seconds))}."
+        return ActionResult(handled=True, detailed_text=res, spoken_text=spoken)
+
+    if phrase in {"list reminders", "show reminders", "my reminders", "what are my reminders",
+                  "list timers", "show timers", "any reminders"}:
+        res = reminders.list_reminders()
+        return ActionResult(handled=True, detailed_text=res, spoken_text=prepare_spoken_answer(res))
+
+    # Weather: "weather", "what's the weather like today", "weather in london"
+    m = re.match(
+        r"^(?:(?:what(?:'s| is)|how(?:'s| is))\s+the\s+)?weather(?:\s+like)?(?:\s+(?:today|now|right now|outside))?"
+        r"(?:\s+in\s+([a-z][a-z\s\-]{1,40}))?$",
+        phrase,
+    )
+    if m:
+        res = skills.get_weather(m.group(1) or "")
+        first_line = res.split("\n")[0]
+        return ActionResult(handled=True, detailed_text=res, spoken_text=first_line)
+
+    # Media keys
+    media_map = {
+        "play music": "play_pause", "pause music": "play_pause", "resume music": "play_pause",
+        "play the music": "play_pause", "pause the music": "play_pause", "resume the music": "play_pause",
+        "pause the song": "play_pause", "play the song": "play_pause", "pause song": "play_pause",
+        "resume playback": "play_pause", "pause playback": "play_pause", "play pause": "play_pause",
+        "next song": "next", "next track": "next", "skip song": "next", "skip this song": "next",
+        "skip track": "next", "play next song": "next", "previous song": "previous",
+        "previous track": "previous", "last song": "previous", "play previous song": "previous",
+        "stop music": "stop", "stop the music": "stop", "stop playback": "stop",
+    }
+    if phrase in media_map:
+        res = skills.media_control(media_map[phrase])
+        return ActionResult(handled=True, detailed_text=res, spoken_text=res)
+
+    # "play barsaat song", "play some trending hindi songs on youtube", "watch interstellar trailer"
+    m = re.match(
+        r"^(?:(?:hey\s+)?jarvis[,\s]+)?(?:please\s+)?(?:can you\s+)?(?:play|put on|listen to|watch)\s+(.+?)"
+        r"(?:\s+(?:on|in|from)\s+(youtube music|youtube|spotify))?(?:\s+please)?$",
+        phrase,
+    )
+    if m:
+        from assistant.media import play_media, play_next_result
+
+        what = re.sub(r"^(?:me\s+)?(?:some|a|an|the)\s+", "", m.group(1)).strip()
+        what = re.sub(r"^(?:first|top)\s+(?:video|song|result)\s+(?:of|for)\s+", "", what)
+        what = re.sub(r"\s+for me$", "", what).strip()
+        platform = (m.group(2) or "youtube").replace(" ", "_")
+        if what in {"another one", "something else", "a different one", "different one", "next one", "other one"}:
+            res = play_next_result()
+        elif what and what not in {"it", "that", "this", "music", "song", "video"}:
+            res = play_media(what, platform=platform)
+        else:
+            res = ""
+        if res:
+            spoken = res.split(" https://")[0]
+            spoken = re.sub(r"\s*\(\d+:\d+(?::\d+)?\)", "", spoken)
+            return ActionResult(handled=True, detailed_text=res, spoken_text=spoken)
+
+    # Pure arithmetic: "what is 25 * 4", "calculate 18% of 2450", "15 x 3"
+    m = re.match(r"^(?:what(?:'s| is)|calculate|compute|solve)?\s*([\d\s.+\-*/x×÷^()%]+|[\d.]+\s*(?:%|percent)\s*of\s*[\d.]+)$", phrase)
+    if m:
+        expr = m.group(1).strip()
+        if re.search(r"\d", expr) and re.search(r"[+\-*/x×÷^%]|percent", expr) and not re.fullmatch(r"[\d.\s]+", expr):
+            expr = re.sub(r"(?<=\d)\s*x\s*(?=\d)", "*", expr)
+            res = skills.calculate(expr)
+            if "couldn't evaluate" not in res:
+                answer = res.split("=")[-1].strip()
+                return ActionResult(handled=True, detailed_text=res, spoken_text=f"That's {answer}.")
+
+    return None
+
+
 def execute_fast_command(text: str) -> ActionResult:
     """Evaluate if the user query is a fast local command.
 
@@ -344,6 +469,11 @@ def execute_fast_command(text: str) -> ActionResult:
             spoken_text=res,
         )
 
+    # 4.7. Everyday skills that don't need the LLM
+    skill_result = _try_skill_fast_path(clean, text)
+    if skill_result is not None:
+        return skill_result
+
     # 5. Direct Web Shortcuts
     if clean in {"open google", "google"}:
         webbrowser.open("https://www.google.com")
@@ -391,7 +521,8 @@ def execute_fast_command(text: str) -> ActionResult:
 
     # 7. Memory Operations
     if clean.startswith("remember "):
-        fact = text[9:].strip()
+        fact = text.strip()[9:].strip()
+        fact = re.sub(r"^(?:that|this|to)\s+", "", fact, flags=re.IGNORECASE).rstrip(".")
         if fact:
             res = remember_fact(fact)
             return ActionResult(

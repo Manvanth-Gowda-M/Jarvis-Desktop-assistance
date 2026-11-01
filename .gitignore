@@ -90,3 +90,6 @@ dist/
 *.egg-info/
 eggs/
 .eggs/
+
+# Jarvis app runtime logs
+logs/

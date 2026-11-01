@@ -1,3 +1,7 @@
+import os
+import re
+
+import requests
 import speech_recognition as sr
 from config import (
     LISTEN_TIMEOUT,
@@ -5,7 +9,21 @@ from config import (
     PAUSE_THRESHOLD,
     NON_SPEAKING_DURATION,
     MICROPHONE_DEVICE_INDEX,
+    STT_ENGINE,
+    STT_LANGUAGE,
+    GROQ_BASE_URL,
+    GROQ_STT_MODEL,
 )
+
+# Phrases Whisper commonly invents for silence/background noise.
+_WHISPER_HALLUCINATIONS = {
+    "", "you", "thank you", "thanks for watching", "thank you for watching", "bye",
+    "thank you so much for watching", "please subscribe", "subtitles by the amara org community",
+}
+
+
+def _normalize(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", " ", str(text).lower())).strip()
 
 
 class Listener:
@@ -28,6 +46,7 @@ class Listener:
         self._mic = None
         self.last_capture_duration = 0.0
         self.last_recognition_duration = 0.0
+        self._groq_failures = 0
 
     def _get_microphone(self) -> sr.Microphone:
         if self._mic is None:
@@ -78,25 +97,83 @@ class Listener:
             return ""
 
         t_rec_start = time.time()
-        try:
-            text = self.recognizer.recognize_google(audio)
-            cleaned_text = text.strip().lower()
-            self.last_recognition_duration = time.time() - t_rec_start
+        text = ""
+        engine_used = "google"
+        if self._use_groq():
+            text = self._recognize_groq(audio)
+            if text:
+                engine_used = "groq-whisper"
+        if not text:
+            text = self._recognize_google(audio)
+
+        self.last_recognition_duration = time.time() - t_rec_start
+        cleaned_text = text.strip().lower() if text else ""
+        if cleaned_text:
             print(
                 f"[Audio Latency] Capture: {self.last_capture_duration:.2f}s | "
-                f"STT: {self.last_recognition_duration:.2f}s | "
+                f"STT ({engine_used}): {self.last_recognition_duration:.2f}s | "
                 f"Heard: '{cleaned_text}'"
             )
-            return cleaned_text
+        return cleaned_text
+
+    # ------------------------------------------------------------------ STT engines
+    def _use_groq(self) -> bool:
+        engine = os.getenv("STT_ENGINE", STT_ENGINE).strip().lower()
+        if engine == "google":
+            return False
+        return bool(os.getenv("GROQ_API_KEY", "").strip()) and self._groq_failures < 3
+
+    def _recognize_groq(self, audio) -> str:
+        """Transcribe with Groq's free Whisper endpoint. Returns '' on failure."""
+        try:
+            wav = audio.get_wav_data(convert_rate=16000, convert_width=2)
+        except Exception:
+            return ""
+        # Very short clips are almost always noise; Whisper tends to hallucinate on them.
+        if len(wav) < 16000 * 2 * 0.35:
+            return ""
+        try:
+            resp = requests.post(
+                f"{os.getenv('GROQ_BASE_URL', GROQ_BASE_URL).rstrip('/')}/audio/transcriptions",
+                headers={"Authorization": f"Bearer {os.getenv('GROQ_API_KEY', '').strip()}"},
+                files={"file": ("speech.wav", wav, "audio/wav")},
+                data={
+                    "model": os.getenv("GROQ_STT_MODEL", GROQ_STT_MODEL),
+                    "language": os.getenv("STT_LANGUAGE", STT_LANGUAGE),
+                    "response_format": "json",
+                    "temperature": "0",
+                },
+                timeout=15,
+            )
+        except requests.RequestException as err:
+            self._groq_failures += 1
+            print(f"[Listener] Groq Whisper unavailable ({err}); falling back to Google.")
+            return ""
+        if resp.status_code != 200:
+            if resp.status_code in (401, 403):
+                self._groq_failures = 99
+            else:
+                self._groq_failures += 1
+            print(f"[Listener] Groq Whisper HTTP {resp.status_code}; falling back to Google.")
+            return ""
+        self._groq_failures = 0
+        try:
+            text = str(resp.json().get("text", "")).strip()
+        except ValueError:
+            return ""
+        if _normalize(text) in _WHISPER_HALLUCINATIONS:
+            return ""
+        return text
+
+    def _recognize_google(self, audio) -> str:
+        try:
+            return self.recognizer.recognize_google(audio)
         except sr.UnknownValueError:
-            self.last_recognition_duration = time.time() - t_rec_start
             return ""
         except sr.RequestError as req_err:
-            self.last_recognition_duration = time.time() - t_rec_start
             print(f"[Speech Service Unavailable]: {req_err}")
             return ""
         except Exception as e:
-            self.last_recognition_duration = time.time() - t_rec_start
             print(f"[Speech Recognition Error]: {e}")
             return ""
 

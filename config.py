@@ -90,6 +90,78 @@ OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/ap
 API_TIMEOUT = float(os.getenv("API_TIMEOUT", "30.0"))
 MAX_TOOL_STEPS = int(os.getenv("MAX_TOOL_STEPS", "6"))
 
+# ---------------------------------------------------------------------------
+# Multi-provider free LLM settings (all OpenAI-compatible endpoints)
+#   - Groq        : https://console.groq.com  (free tier, very fast LPU inference)
+#   - NVIDIA NIM  : https://build.nvidia.com  (free developer API, nvapi- keys)
+#   - OpenRouter  : https://openrouter.ai     (only ':free' models / openrouter/free)
+# Providers without an API key are skipped automatically. The order below is the
+# failover order: if one provider is rate-limited or down, the next one is tried.
+# Model lists are comma-separated so you can update them when providers rotate models.
+# ---------------------------------------------------------------------------
+LLM_PROVIDER_ORDER = os.getenv("LLM_PROVIDER_ORDER", "groq,nvidia,openrouter")
+
+GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+GROQ_MODELS = os.getenv("GROQ_MODELS", "openai/gpt-oss-120b,openai/gpt-oss-20b")
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
+
+NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+NVIDIA_MODELS = os.getenv(
+    "NVIDIA_MODELS",
+    "nvidia/nemotron-3.5-super-vl-120b-a12b,nvidia/nemotron-3.5-lightning-30b-a3b,"
+    "nvidia/nemotron-3-ultra-550b-a55b,mistralai/mistral-large-4-1t-a52b",
+)
+NVIDIA_VISION_MODEL = os.getenv("NVIDIA_VISION_MODEL", "nvidia/nemotron-3.5-super-vl-120b-a12b")
+
+OPENROUTER_EXTRA_MODELS = os.getenv(
+    "OPENROUTER_EXTRA_MODELS",
+    "nvidia/nemotron-3.5-super-vl:free,google/gemma-4-31b-it:free",
+)
+OPENROUTER_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", "nvidia/nemotron-3.5-super-vl:free,openrouter/free")
+
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.6"))
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1200"))
+RATE_LIMIT_COOLDOWN = float(os.getenv("RATE_LIMIT_COOLDOWN", "45"))
+# "smart" sends only the tool groups relevant to each request (saves free-tier tokens);
+# "all" sends every tool schema on every request.
+TOOL_SELECTION = os.getenv("TOOL_SELECTION", "smart").strip().lower()
+
+# ---------------------------------------------------------------------------
+# Personality
+# ---------------------------------------------------------------------------
+USER_NAME = os.getenv("USER_NAME", "")
+USER_TITLE = os.getenv("USER_TITLE", "sir")          # how Jarvis addresses you: sir / ma'am / boss / your name
+DEFAULT_LOCATION = os.getenv("DEFAULT_LOCATION", "")  # used for weather when no city is given
+
+# ---------------------------------------------------------------------------
+# Voice engines
+#   TTS_ENGINE: "edge" (free Microsoft neural voices, needs internet; falls back to SAPI) or "sapi"
+#   STT_ENGINE: "auto" (Groq Whisper when GROQ_API_KEY is set, else Google), "groq", or "google"
+# ---------------------------------------------------------------------------
+TTS_ENGINE = os.getenv("TTS_ENGINE", "edge").strip().lower()
+EDGE_TTS_VOICE = os.getenv("EDGE_TTS_VOICE", "en-GB-RyanNeural")
+EDGE_TTS_RATE = os.getenv("EDGE_TTS_RATE", "+8%")
+EDGE_TTS_PITCH = os.getenv("EDGE_TTS_PITCH", "-2Hz")
+STT_ENGINE = os.getenv("STT_ENGINE", "auto").strip().lower()
+STT_LANGUAGE = os.getenv("STT_LANGUAGE", "en")
+
+# Global push-to-talk hotkey for desktop mode (modifiers + key), e.g. "ctrl+alt+j"
+GLOBAL_HOTKEY = os.getenv("GLOBAL_HOTKEY", "ctrl+alt+j").strip().lower()
+DESKTOP_GREETING = os.getenv("DESKTOP_GREETING", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+# Conversation mode: after answering a voice command, keep listening briefly for a follow-up
+FOLLOW_UP_ENABLED = os.getenv("FOLLOW_UP_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+FOLLOW_UP_TIMEOUT = float(os.getenv("FOLLOW_UP_TIMEOUT", "5.0"))
+FOLLOW_UP_MAX_TURNS = int(os.getenv("FOLLOW_UP_MAX_TURNS", "6"))
+
+_on = lambda v: str(v).strip().lower() in {"1", "true", "yes", "on"}  # noqa: E731
+# Dynamic Island overlay (top-centre pill that appears when you call Jarvis)
+ISLAND_ENABLED = _on(os.getenv("ISLAND_ENABLED", "true"))
+ISLAND_IDLE_VISIBLE = _on(os.getenv("ISLAND_IDLE_VISIBLE", "false"))  # keep a small pill visible when idle
+OPEN_DASHBOARD_ON_START = _on(os.getenv("OPEN_DASHBOARD_ON_START", "false"))
+WAKE_CHIME = _on(os.getenv("WAKE_CHIME", "true"))
+
 # Email Provider & OAuth Configuration
 # OAuth credentials and token caches are strictly stored in %LOCALAPPDATA%\Jarvis\oauth
 # outside the Git repository for DPAPI-backed token security.

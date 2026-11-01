@@ -1,6 +1,22 @@
-# Jarvis 2.0: Personal AI & Windows Automation Assistant
+# Jarvis 3.0: Personal AI & Windows Automation Assistant
 
-A fast, capable personal AI and Windows automation assistant built with Python 3.12 for Windows 10/11. Features conversational voice interaction with Windows SAPI text-to-speech, real-time "Hey Jarvis" wake-word detection powered by openWakeWord ONNX neural models, a sleek PySide6 desktop floating orb interface, zero-latency local system commands, safe file management confined to approved directory roots, desktop automation, secure draft-only Gmail and Outlook integration backed by Windows DPAPI encryption, SQLite memory persistence, and multi-step reasoning using OpenRouter's free AI models.
+A voice-first AI assistant for Windows 10/11, built in Python. It listens for "Hey Jarvis" on-device, understands you with Whisper speech recognition, answers in a neural British voice, and controls your PC through 60+ tools: apps, websites, volume, brightness, media, windows, files, screen vision, weather, news, reminders, notes, memory, and draft-only email.
+
+Everything runs on **free AI providers only**: Groq, NVIDIA NIM, and OpenRouter `:free` models, with automatic failover between them when one is rate-limited or down.
+
+## What's new in 3.0
+
+| Area | Before | Now |
+|---|---|---|
+| AI brain | One provider (OpenRouter free router) | **Groq + NVIDIA NIM + OpenRouter** with automatic failover and per-model rate-limit cooldowns |
+| Token use | All 49 tool schemas (~4.5K tokens) sent on every request | **Smart tool selection**: only relevant groups are sent (~800–2,000 tokens), which keeps free-tier limits usable |
+| Personality | Generic assistant prompt | J.A.R.V.I.S.-style persona, current date/time and your saved memories injected into context |
+| Voice out | Robotic Windows SAPI | **Neural voice** `en-GB-RyanNeural` via free Edge TTS, SAPI fallback when offline |
+| Voice in | Google Web Speech | **Groq Whisper** (`whisper-large-v3-turbo`) with Google fallback and hallucination filtering |
+| Conversation | Wake word needed for every command | **Follow-up mode**: Jarvis keeps listening ~5 s after answering |
+| Vision | None | "What's on my screen?" / "Explain this error" using free vision models |
+| Skills | Time, apps (4 hard-coded), web search | Weather (Open-Meteo), news, Wikipedia, safe calculator, timers & persistent reminders, media keys, clipboard, open **any** installed app or website |
+| Desktop | Orb + panel | Global push-to-talk hotkey (**Ctrl+Alt+J**), spoken greeting, reminder tray balloons, Markdown-rendered answers |
 
 ---
 
@@ -11,9 +27,11 @@ A fast, capable personal AI and Windows automation assistant built with Python 3
 | **Language & Runtime** | Python 3.12 (64-bit) | Core runtime environment on Windows 10/11 |
 | **User Interface** | PySide6 (Qt 6 for Python) | Frameless, translucent desktop floating orb with state animations (STANDBY, LISTENING, THINKING, SPEAKING) |
 | **Wake-Word Engine** | openWakeWord + ONNX Runtime | On-device, low-latency "Hey Jarvis" neural detection running locally on CPU |
-| **Speech Recognition** | SpeechRecognition + PyAudio | Windows microphone audio capture and Google Speech API speech-to-text |
-| **Text-to-Speech (TTS)** | Windows SAPI (`win32com.client`) | Natural Windows speech synthesis with instant keyboard & voice interruption |
-| **AI & LLM Reasoning** | OpenRouter API (`httpx`) | Dynamic tool-calling agent with strict `:free` model enforcement and synthesis fallback |
+| **Speech Recognition** | Groq Whisper API + SpeechRecognition + PyAudio | Microphone capture; Whisper transcription with Google Web Speech fallback |
+| **Text-to-Speech (TTS)** | `edge-tts` neural voices + Windows SAPI | Natural British voice, played through Windows MCI; SAPI fallback; keyboard & voice interruption |
+| **AI & LLM Reasoning** | Groq, NVIDIA NIM, OpenRouter (`requests`) | OpenAI-compatible tool-calling agent with cross-provider failover, smart tool selection and synthesis pass |
+| **Vision** | Free vision models (Nemotron VL, Llama 3.2 Vision, Llama 4 Scout) | Screen and image understanding |
+| **Live data** | Open-Meteo, Wikipedia REST, DuckDuckGo (`ddgs`) | Weather, encyclopedia, news and web research with no API keys |
 | **Email Integration** | Google OAuth 2.0 + MSAL / Graph API | Secure, draft-only email composition for Gmail and Microsoft Outlook |
 | **Token Security** | Windows DPAPI (`crypt32` / `msal-extensions`) | Hardware-backed local token encryption tied to the Windows user session |
 | **Desktop Automation** | `pywin32` + `pyautogui` + `pillow` | Window management (focus, minimize, maximize), desktop screenshots, and controlled typing |
@@ -107,7 +125,12 @@ Jarvis/
 │   └── test_wake_word.py
 └── assistant/
     ├── __init__.py          # Unified package exports
-    ├── agent.py             # OpenRouter tool-calling agent with free-model failover
+    ├── agent.py             # Multi-provider free-model tool-calling agent (Groq / NVIDIA NIM / OpenRouter)
+    ├── llm_providers.py     # Free provider registry, failover order, rate-limit cooldowns
+    ├── skills.py            # Weather, news, Wikipedia, calculator, media keys, clipboard, websites
+    ├── reminders.py         # Persistent timers and reminders with UI/voice notifications
+    ├── vision.py            # Screen and image understanding with free vision models
+    ├── hotkey.py            # Global push-to-talk hotkey (Win32 RegisterHotKey)
     ├── approvals.py         # Risk classification and SQLite action audit history
     ├── audio_coordinator.py # Thread-safe microphone ownership and state coordinator
     ├── brain.py             # Brain compatibility interface
@@ -168,13 +191,19 @@ Copy the template configuration file to `.env`:
 cp .env.example .env
 ```
 
-Open `.env` in your text editor and add your OpenRouter API key:
+Open `.env` and add **at least one** free API key. Adding all three gives the best reliability, because Jarvis fails over between them automatically:
+
 ```env
-OPENROUTER_API_KEY=sk-or-v1-your-actual-api-key-here
-OPENROUTER_MODEL=openrouter/free
-JARVIS_NAME=Jarvis
+GROQ_API_KEY=gsk_...        # https://console.groq.com/keys  (fastest; also enables Whisper speech recognition)
+NVIDIA_API_KEY=nvapi-...    # https://build.nvidia.com       (click "Get API Key" on any model page)
+OPENROUTER_API_KEY=sk-or-...# https://openrouter.ai/keys     (only ':free' models are ever used)
+USER_TITLE=sir
+DEFAULT_LOCATION=Hyderabad
 ```
-*(Get a free API key at [openrouter.ai](https://openrouter.ai). Jarvis uses only `:free` models by design.)*
+
+None of these require a credit card. Free tiers have rate limits (for example Groq allows roughly 30 requests/minute on chat models); when one provider is rate-limited, Jarvis cools that model down and moves to the next. Free model catalogs change often, so model IDs are configurable in `.env` (`GROQ_MODELS`, `NVIDIA_MODELS`, `OPENROUTER_EXTRA_MODELS`).
+
+Run `python main.py --diagnostics` to confirm each provider responds.
 
 ### 4. Wake-Word ONNX Models
 The required ONNX models are included in `models/` (~3.5 MB total):
@@ -191,12 +220,35 @@ python -m assistant.wake_word --download
 
 ## How to Run Jarvis
 
+### 0. The Jarvis App (Recommended)
+```powershell
+python main.py --install   # one time: creates Desktop + Start Menu shortcuts with the Jarvis icon
+python main.py             # or double-click the "Jarvis" shortcut
+```
+Jarvis runs in the background with a **Dynamic Island**, a black pill at the top-centre of the screen. Say **"Hey Jarvis"** (or press **Ctrl+Alt+J**). You hear a chime, and the island drops down showing:
+1. **Listening…** with a live waveform
+2. **Working on it…** with what you said, and a live checklist of each action ("Opening Spotify ✓", "Checking the weather in Hyderabad…")
+3. The **answer** while Jarvis speaks. It then shrinks away on its own.
+
+Click the island (or the tray icon) to open the full dashboard; right-click it for options. The island never takes keyboard focus, so typing actions go to the window you were using.
+
+The dashboard window has six pages:
+- **Home**: animated arc-reactor HUD showing the live state, the conversation, quick actions (weather, news, screen, system, reminders), and Talk / Pause mic / Stop buttons.
+- **System**: live CPU, memory, disk, network, battery and uptime graphs, plus top processes.
+- **Reminders**: add, view, and cancel reminders and timers.
+- **Memory**: view, add, and delete what Jarvis remembers about you.
+- **Activity**: what Jarvis heard, which AI model answered, and every tool it used.
+- **Settings**: API keys, name/title/city, neural voice with a test button, speech recognition, follow-up mode, wake sensitivity, hotkey, and launch at sign-in. Saved to `.env`.
+
+Closing the window keeps Jarvis in the system tray, so "Hey Jarvis" and **Ctrl+Alt+J** keep working. Right-click the tray icon to quit or show the floating orb. Logs are written to `logs/jarvis.log`. `python main.py --uninstall` removes the shortcuts and the launch-at-sign-in entry.
+
 ### 1. Desktop Mode with Floating Animated Orb (Recommended)
 Launches the full interactive experience with the animated floating orb, local wake-word listener, and quick-action bar:
 ```powershell
 python main.py --desktop
 ```
-- Say **"Hey Jarvis"** hands-free to activate listening.
+- Say **"Hey Jarvis"** hands-free to activate listening, or press **Ctrl+Alt+J** from any app.
+- After Jarvis answers, just keep talking for a follow-up. Say "that's all" or stay silent to end.
 - Click the **Speak** button as a manual fallback.
 - Click the **✉ Email** button to inspect or connect email accounts.
 
@@ -308,7 +360,9 @@ Jarvis features a strict **Draft-Only** email integration that connects securely
 5. **System Power Actions**:
    - Critical power actions (shutdown, restart, signout) require double-confirmation to prevent accidental invocation.
 6. **Free-Model Constraints**:
-   - Jarvis enforces free AI models (`:free`). Rate limits or temporary provider downtime on OpenRouter may require a brief cooldown before re-submitting queries.
+   - Jarvis only talks to free tiers: Groq, NVIDIA NIM, and OpenRouter `:free` models (paid OpenRouter models are rejected in code). Free tiers are rate-limited; with several providers configured, Jarvis fails over automatically.
+7. **Third-party voice and data services**:
+   - Neural TTS sends the spoken sentence to Microsoft's Edge read-aloud service; Whisper STT sends your recorded command to Groq. Set `TTS_ENGINE=sapi` and `STT_ENGINE=google` to change this. Screen analysis sends a screenshot to the configured vision provider only when you ask about your screen.
 
 ---
 
@@ -353,6 +407,16 @@ Try speaking these natural phrases to Jarvis in voice or desktop mode:
    - *"Save this draft in Gmail."*
    - *"Read my email draft."*
 
+7. **Vision, Live Data & Productivity**:
+   - *"What's on my screen?"* / *"Explain the error on my screen."*
+   - *"What's the weather like?"* / *"Will it rain tomorrow in Mumbai?"*
+   - *"Give me the latest AI news."* / *"Who is Jensen Huang?"*
+   - *"Set a timer for 10 minutes."* / *"Remind me to call mom at 7 pm."*
+   - *"What's 18% of 2450?"*
+   - *"Pause the music."* / *"Next song."*
+   - *"Summarize what I copied."* (reads the clipboard)
+   - *"Open Spotify."* / *"Open GitHub."*
+
 ---
 
 ## Supported Fast Commands
@@ -370,5 +434,12 @@ Try speaking these natural phrases to Jarvis in voice or desktop mode:
 | `remember <fact>` | Saves fact to SQLite long-term memory |
 | `what do you remember [about <topic>]` | Recalls saved facts matching topic |
 | `list notes` | Lists saved Markdown research notes |
+| `weather` / `weather in <city>` | Current weather and forecast (Open-Meteo) |
+| `set a timer for 5 minutes` | Starts a countdown timer |
+| `list reminders` | Shows pending reminders and timers |
+| `what is 25 * 4` / `18% of 2450` | Instant safe calculator |
+| `pause music` / `next song` / `previous track` | System media keys |
+| `new conversation` | Clears short-term conversation context |
+| `help` | Lists capabilities |
 | `text mode` / `voice mode` | Switches interaction mode dynamically |
 | `exit` / `quit` / `goodbye` | Closes Jarvis |

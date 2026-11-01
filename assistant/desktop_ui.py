@@ -50,10 +50,34 @@ from PySide6.QtWidgets import (
     QComboBox,
 )
 
-from config import JARVIS_NAME
+from config import JARVIS_NAME, USER_TITLE, GLOBAL_HOTKEY, DESKTOP_GREETING
 from assistant.audio_coordinator import AudioCoordinator, AssistantState
 from assistant.wake_word import get_wake_word_setup_instructions
 from assistant.email_assistant import _default_assistant
+import html as _html
+from datetime import datetime as _datetime
+from PySide6.QtGui import QTextDocument
+
+
+def _markdown_to_html(text: str) -> str:
+    """Render assistant Markdown (lists, bold, links, code) for the response viewer."""
+    doc = QTextDocument()
+    try:
+        doc.setMarkdown(str(text or ""))
+        body = doc.toHtml()
+        # Keep only the <body> contents so it appends cleanly.
+        start, end = body.find("<body"), body.rfind("</body>")
+        if start != -1 and end != -1:
+            body = body[body.find(">", start) + 1:end]
+        return body
+    except Exception:
+        return _html.escape(str(text or "")).replace("\n", "<br>")
+
+
+def _time_greeting() -> str:
+    hour = _datetime.now().hour
+    part = "morning" if 5 <= hour < 12 else "afternoon" if 12 <= hour < 17 else "evening"
+    return f"Good {part}, {USER_TITLE}. {JARVIS_NAME} is online and ready."
 
 # ---------------------------------------------------------------------------
 # COLOR PALETTE: Futuristic Cyan / Electric Blue / Deep Void
@@ -142,6 +166,7 @@ class UIBridge(QObject):
     """Thread-safe signal bridge between AudioCoordinator background threads and Qt GUI."""
     state_changed = Signal(str, str)     # state_name, detail
     result_received = Signal(str, str)   # detailed_text, spoken_text
+    notification = Signal(str, str)      # title, message (shown as a tray balloon)
 
 
 class JarvisOrbWidget(QWidget):
@@ -504,7 +529,7 @@ class CompactControlPanel(QWidget):
         self.response_view = QTextEdit()
         self.response_view.setReadOnly(True)
         self.response_view.setPlaceholderText("Detailed assistant responses and actions appear here...")
-        self.response_view.setFixedHeight(120)
+        self.response_view.setFixedHeight(260)
         self.response_view.setStyleSheet("""
             QTextEdit {
                 background-color: rgba(3, 8, 20, 0.6);
@@ -559,7 +584,7 @@ class CompactControlPanel(QWidget):
         text = self.input_field.text().strip()
         if text:
             self.input_field.clear()
-            self.response_view.append(f"\n<b>You:</b> {text}")
+            self.response_view.append(f"<br><b style='color:#8fd8ff'>You:</b> {_html.escape(text)}")
             self.coordinator.process_text_command(text)
 
     def toggle_email_panel(self):
@@ -596,7 +621,8 @@ class CompactControlPanel(QWidget):
             self.wake_lbl.setText(detail)
 
     def _on_result_received(self, detailed: str, spoken: str):
-        self.response_view.append(f"<b>{JARVIS_NAME}:</b> {detailed}")
+        self.response_view.append(f"<b style='color:#00e5ff'>{_html.escape(JARVIS_NAME)}:</b>")
+        self.response_view.append(_markdown_to_html(detailed))
         # Scroll to bottom
         sb = self.response_view.verticalScrollBar()
         sb.setValue(sb.maximum())
@@ -1031,6 +1057,33 @@ def run_desktop_app(check_single_instance: bool = True) -> int:
         tray = JarvisTrayIcon(orb=orb, control_panel=panel, coordinator=coordinator)
         tray.show()
 
+        # Reminders: show a tray balloon and speak when one fires (signal keeps Qt calls on the GUI thread)
+        from assistant import reminders
+
+        bridge.notification.connect(
+            lambda title, msg: tray.showMessage(title, msg, QSystemTrayIcon.MessageIcon.Information, 8000)
+        )
+
+        def _on_reminder(text: str):
+            bridge.notification.emit(f"{JARVIS_NAME} Reminder", text)
+            coordinator.announce(text)
+
+        reminders.register_notifier(_on_reminder)
+        reminders.start_scheduler()
+
+        # System-wide push-to-talk hotkey
+        hotkey = None
+        try:
+            from assistant.hotkey import GlobalHotkey
+
+            hotkey = GlobalHotkey(GLOBAL_HOTKEY, lambda: coordinator.trigger_listening())
+            if hotkey.start():
+                print(f"[Desktop UI] Push-to-talk hotkey active: {GLOBAL_HOTKEY.upper()}")
+            else:
+                print(f"[Desktop UI] Hotkey '{GLOBAL_HOTKEY}' unavailable: {hotkey.error}")
+        except Exception as hk_err:
+            print(f"[Desktop UI] Hotkey setup failed: {hk_err}")
+
         # Initial position: bottom right corner above taskbar
         screen = app.primaryScreen().availableGeometry()
         init_x = screen.right() - orb.width() - 30
@@ -1046,7 +1099,13 @@ def run_desktop_app(check_single_instance: bool = True) -> int:
             print("[Desktop UI] Wake-word model not loaded. Click the orb, press Space, or use the panel to talk.")
             print(get_wake_word_setup_instructions())
 
+        if DESKTOP_GREETING:
+            QTimer.singleShot(800, lambda: coordinator.announce(_time_greeting()))
+
         exit_code = app.exec()
+        reminders.unregister_notifier(_on_reminder)
+        if hotkey:
+            hotkey.stop()
         coordinator.shutdown()
         return exit_code
     finally:

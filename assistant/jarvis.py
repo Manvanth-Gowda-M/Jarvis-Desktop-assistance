@@ -76,14 +76,20 @@ class Jarvis:
 
     def run(self):
         """Main execution loop for Jarvis."""
+        from assistant.llm_providers import configured_provider_names
+        from assistant import reminders
+
+        reminders.start_scheduler()
+        providers = configured_provider_names()
         welcome_detail = (
-            f"Hello! I am {JARVIS_NAME}, your personal AI assistant.\n"
-            "Fast commands execute instantly on your system. "
-            "Complex queries and research route to the OpenRouter free AI agent.\n"
+            f"{JARVIS_NAME} online.\n"
+            f"AI providers (free, in failover order): {', '.join(providers) if providers else 'NONE - add a key to .env'}\n"
+            "Fast commands execute instantly on your system; everything else goes to the AI agent.\n"
             f"Mode: {'Voice + Terminal' if self.voice_mode else 'Terminal Text Mode'}. "
-            "Type or say 'exit' to quit."
+            "Say 'help' for capabilities, 'exit' to quit."
         )
-        welcome_spoken = f"Hello. I am {JARVIS_NAME}. How can I assist you today?"
+        from config import USER_TITLE
+        welcome_spoken = f"{JARVIS_NAME} online. How can I help, {USER_TITLE}?"
 
         print("=" * 60)
         print(welcome_detail)

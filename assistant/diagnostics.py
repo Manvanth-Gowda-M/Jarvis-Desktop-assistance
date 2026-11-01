@@ -214,6 +214,66 @@ def check_openrouter_api() -> dict:
         }
 
 
+def check_llm_providers() -> list[dict]:
+    """Probe every configured free provider (Groq, NVIDIA NIM, OpenRouter) with a tiny request."""
+    import requests
+    from assistant.llm_providers import build_provider
+
+    results = []
+    key_envs = {"groq": "GROQ_API_KEY", "nvidia": "NVIDIA_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
+    for name, env in key_envs.items():
+        provider = build_provider(name, openrouter_primary=CONFIGURED_MODEL)
+        label = {"groq": "Groq", "nvidia": "NVIDIA NIM", "openrouter": "OpenRouter"}[name]
+        if provider is None:
+            results.append({"name": f"{label} API", "status": "SKIP", "details": f"{env} not set (optional)"})
+            continue
+        masked = mask_key(provider.api_key)
+        model = provider.models[0]
+        try:
+            resp = requests.post(
+                provider.chat_url,
+                headers=provider.headers(),
+                json={"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                status, details = "PASS", f"{model} reachable (Key: {masked})"
+            elif resp.status_code == 429:
+                status, details = "WARN", f"Rate limited on {model} (Key: {masked})"
+            else:
+                status, details = "WARN", f"HTTP {resp.status_code} on {model}: {resp.text[:80]} (Key: {masked})"
+        except Exception as e:
+            status, details = "WARN", f"Network probe notice: {e} (Key: {masked})"
+        results.append({"name": f"{label} API", "status": status, "details": details})
+
+    if all(r["status"] == "SKIP" for r in results):
+        results.append({
+            "name": "AI Providers",
+            "status": "FAIL",
+            "details": "No provider key set. Add GROQ_API_KEY, NVIDIA_API_KEY or OPENROUTER_API_KEY to .env",
+        })
+    return results
+
+
+def check_voice_engines() -> list[dict]:
+    from config import TTS_ENGINE, EDGE_TTS_VOICE, STT_ENGINE
+    results = []
+    try:
+        import edge_tts  # noqa: F401
+        tts = ("PASS", f"Neural voice {EDGE_TTS_VOICE} (engine={TTS_ENGINE})")
+    except ImportError:
+        tts = ("WARN", "edge-tts not installed; using Windows SAPI voice (pip install edge-tts)")
+    results.append({"name": "Neural TTS (Edge)", "status": tts[0], "details": tts[1]})
+
+    groq = bool(os.getenv("GROQ_API_KEY", "").strip())
+    if STT_ENGINE == "google" or not groq:
+        stt = ("WARN" if not groq else "PASS", "Google Web Speech (set GROQ_API_KEY for Whisper accuracy)")
+    else:
+        stt = ("PASS", "Groq Whisper (whisper-large-v3-turbo) with Google fallback")
+    results.append({"name": "Speech-to-Text", "status": stt[0], "details": stt[1]})
+    return results
+
+
 def run_diagnostics():
     """Run full diagnostic test suite and print results table."""
     print("=" * 65)
@@ -223,11 +283,12 @@ def run_diagnostics():
     checks = [
         check_python_environment(),
         check_sapi_tts(),
+        *check_voice_engines(),
         check_microphone(),
         check_sqlite_memory(),
         check_notes_directory(),
         check_applications(),
-        check_openrouter_api(),
+        *check_llm_providers(),
     ]
 
     for check in checks:

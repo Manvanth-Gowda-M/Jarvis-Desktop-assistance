@@ -1,4 +1,4 @@
-# Jarvis 2.0 — Personal AI Assistant Dependencies
+# Jarvis 3.0 — Personal AI Assistant Dependencies
 # Install with: pip install -r requirements.txt
 
 # --- Core AI & API ---
@@ -15,7 +15,10 @@ psutil>=5.9.0
 Pillow>=10.0.0
 
 # --- Web Research ---
-duckduckgo-search>=6.0.0
+ddgs>=9.0.0
+
+# --- Neural Text-to-Speech (free Microsoft Edge voices) ---
+edge-tts>=7.0.0
 
 # --- File Management ---
 Send2Trash>=1.8.3
