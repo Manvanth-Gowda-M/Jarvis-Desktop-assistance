@@ -96,7 +96,7 @@ Jarvis/
 ├── .gitignore               # Excludes secrets, credentials, OAuth tokens, DBs, venvs, caches
 ├── requirements.txt         # Project dependencies with pinned versions
 ├── config.py                # Centralized settings & free-model validation
-├── main.py                  # Entry point (--desktop, --voice, --text, --diagnostics)
+├── main.py                  # Entry point (default app, --legacy-orb, --voice, --text, --diagnostics)
 ├── README.md                # Documentation and setup instructions
 ├── credentials/             # Directory for local credentials (git-ignored, tracked by .gitkeep)
 ├── database/                # SQLite storage (jarvis_memory.db, action_history.db) (.gitkeep)
@@ -242,10 +242,10 @@ The dashboard window has six pages:
 
 Closing the window keeps Jarvis in the system tray, so "Hey Jarvis" and **Ctrl+Alt+J** keep working. Right-click the tray icon to quit or show the floating orb. Logs are written to `logs/jarvis.log`. `python main.py --uninstall` removes the shortcuts and the launch-at-sign-in entry.
 
-### 1. Desktop Mode with Floating Animated Orb (Recommended)
-Launches the full interactive experience with the animated floating orb, local wake-word listener, and quick-action bar:
+### 1. Legacy Floating Orb (old UI)
+`python main.py --desktop` now opens the new app with the Dynamic Island (same as `python main.py`). To run the old floating-orb window on its own:
 ```powershell
-python main.py --desktop
+python main.py --legacy-orb
 ```
 - Say **"Hey Jarvis"** hands-free to activate listening, or press **Ctrl+Alt+J** from any app.
 - After Jarvis answers, just keep talking for a follow-up. Say "that's all" or stay silent to end.
@@ -322,7 +322,7 @@ Jarvis features a strict **Draft-Only** email integration that connects securely
    %LOCALAPPDATA%\Jarvis\oauth\google_credentials.json
    ```
    *(e.g. `C:\Users\<Username>\AppData\Local\Jarvis\oauth\google_credentials.json`)*
-7. In the Jarvis desktop interface (`python main.py --desktop`), click the **✉ Email** button and click **Connect** next to Gmail. Your default browser will open for Google authentication. Once approved, your encrypted token is securely stored in `%LOCALAPPDATA%\Jarvis\oauth\gmail_token.dpapi`.
+7. In the old floating-orb interface (`python main.py --legacy-orb`), click the **✉ Email** button and click **Connect** next to Gmail. Your default browser will open for Google authentication. Once approved, your encrypted token is securely stored in `%LOCALAPPDATA%\Jarvis\oauth\gmail_token.dpapi`.
 
 ---
 

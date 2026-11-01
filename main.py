@@ -35,13 +35,14 @@ def main():
         "mode",
         nargs="?",
         default=None,
-        choices=["app", "desktop", "text", "voice", "diagnostics", "install", None],
-        help="Optional mode: app (default), desktop (floating orb only), text, voice, diagnostics, install.",
+        choices=["app", "desktop", "legacy-orb", "text", "voice", "diagnostics", "install", None],
+        help="Optional mode: app (default), desktop (same as app), legacy-orb, text, voice, diagnostics, install.",
     )
-    parser.add_argument("--app", action="store_true", help="Run the full Jarvis app with dashboard (default).")
+    parser.add_argument("--app", action="store_true", help="Run the full Jarvis app with Dynamic Island (default).")
     parser.add_argument("--minimized", action="store_true", help="Start the app hidden in the system tray.")
     parser.add_argument("--dashboard", action="store_true", help="Open the dashboard window on start.")
-    parser.add_argument("--desktop", action="store_true", help="Run the minimal floating-orb companion only.")
+    parser.add_argument("--desktop", action="store_true", help="Alias for --app (kept for old commands).")
+    parser.add_argument("--legacy-orb", action="store_true", help="Run the old floating-orb companion only.")
     parser.add_argument("--text", action="store_true", help="Run in terminal text mode without voice input.")
     parser.add_argument("--voice", action="store_true", help="Run in terminal voice mode.")
     parser.add_argument("--diagnostics", action="store_true", help="Run system diagnostic and hardware health checks.")
@@ -71,7 +72,7 @@ def main():
         run_diagnostics()
         sys.exit(0)
 
-    if args.desktop or args.mode == "desktop":
+    if args.legacy_orb or args.mode == "legacy-orb":
         from assistant.desktop_ui import run_desktop_app
         sys.exit(run_desktop_app())
 
